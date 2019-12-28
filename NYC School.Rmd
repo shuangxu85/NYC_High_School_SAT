@@ -1,0 +1,273 @@
+---
+title: "Exploring NYC High Schools and Survey Data"
+author: "Shuangxu Li"
+date: "December 19, 2019"
+output:
+  html_document:
+    df_print: paged
+---
+In this project, I will clean and reorganize data from the New York City Department of Education (DOE) to explore factors that are related to students' SAT test performance, as well as to understand whether parent, teacher, and student perceptions of academic expectations, communication and other factors would affect the average school SAT performance. 
+
+Through this analysis, I want to get some general SAT test performance information of public schools in New York city, and want to know whether certain demographic factors (such as gender, income, race and so on) would bring any difference in test results across five boroughs in New York city. In addition, I wonder whether students, teachers, and parents have similar perceptions of NYC school quality and whose survey results are more closer to the actual results. All of these questions are explored through further data visualizations made by Tableau, and you can find them [here](https://public.tableau.com/profile/shuangxu.li#!/vizhome/NYC_15773359968400/DB_General). 
+
+The test performance data, collected in 2012, are public available and can be assessed
+[here](https://infohub.nyced.org/reports-and-policies/citywide-information-and-data/information-and-data-overview), and the survey data can be found  [here](https://data.cityofnewyork.us/Education/2011-NYC-School-Survey/mnz3-dyi8).
+
+This is a guided project from DataQuest.
+
+I'll start by loading the packages that I'll need for this analysis: 
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(readr)
+library(dplyr)
+library(stringr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+```
+
+Then I import these documents and will look into each of them one by one. 
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+sat_results <- read_csv("/Users/shuangxu/Documents/All Tableau/Resume Project/Data/2012_SAT_Results.csv") 
+class_size <- read_csv("/Users/shuangxu/Documents/All Tableau/Resume Project/Data/2011-2012_CLASS_SIZE_REPORT_SCHOOL_LEVEL_DETAIL.csv")
+demographics <- read_csv("//Users/shuangxu/Documents/All Tableau/Resume Project/Data/2011_-_2016_Demographic_Snapshot.csv") 
+graduation <- read_csv("/Users/shuangxu/Documents/All Tableau/Resume Project/Data/2001_-_2013_Graduation_Outcomes.csv") 
+hs_directory <- read_csv("/Users/shuangxu/Documents/All Tableau/Resume Project/Data/2014_-_2015_DOE_High_School_Directory.csv")
+survey_gened <- read_tsv('/Users/shuangxu/Documents/All Tableau/Resume Project/Data/2011_School_Survey/masterfile11_gened_final.txt')
+survey_d75 <- read_tsv('/Users/shuangxu/Documents/All Tableau/Resume Project/Data/2011_School_Survey/masterfile11_d75_final.txt')
+```
+For the SAT results file, I need information about the average SAT scores for each school. But I find there are only columns for average writing, critical reading and math scores, and they are in character format.
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+glimpse(sat_results)
+```
+So I changed them into numeric format and then added them up to get total SAT score (named Avg_sat_score) for each high school. 
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+sat_results <- sat_results %>%
+  
+    # change data format from character to numeric
+    mutate(`Num of SAT Test Takers` =  as.numeric(`Num of SAT Test Takers`),
+         `SAT Writing Avg. Score` = as.numeric(`SAT Writing Avg. Score`), 
+         `SAT Critical Reading Avg. Score` = as.numeric(`SAT Critical Reading Avg. Score`),
+         `SAT Math Avg. Score` = as.numeric(`SAT Math Avg. Score`)) %>%
+   
+     # create new column Avg_sat_score by adding other columns up 
+     mutate(Avg_sat_score = `SAT Writing Avg. Score` + `SAT Critical Reading Avg. Score` + `SAT Math Avg. Score`)
+```
+DBN is a unique identifier for each high school in NYC. I could use DBN variable as a key factor to join other data file. In this Class Size data set, I did not find the DBN variable, but I could generate one by combining the CSD and School Code columns. I also find there are four different program types in it, but I only care about General Education program ('GEN ED'), so I would filter out those rows related to other programs. At last, I will group rows at school-level in order to connect with other files. 
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+glimpse(class_size)
+```
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+class_size <- class_size %>%
+    
+    # create a new DBN column by combining CSD and Shool Code variables and add '0' in its 1st position to match the DBN variable
+    mutate(DBN = str_c(CSD, `SCHOOL CODE`, sep = "")) %>%
+    mutate(DBN = str_pad(DBN, width = 6, side = 'left', pad = "0")) %>%
+
+    # remove unnecessary rows
+    filter(GRADE == "09-12", `PROGRAM TYPE` == "GEN ED") %>%
+
+    # group by DBN to obtain school-level information   
+    group_by(DBN) %>%
+    summarize(Avg_class_size = mean(`AVERAGE CLASS SIZE`), 
+              Avg_largest_class = mean(`SIZE OF LARGEST CLASS`),
+              Avg_smallest_class = mean(`SIZE OF SMALLEST CLASS`))
+```
+For the Demographics data set, I select students who are graduated at year 2011-12, then filter out those unnecessary variables. Many demographic information shown in percentage are characters, I will change them into numbers for further analysis. 
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+glimpse(demographics)
+```
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+demographics <- demographics %>%
+    
+    # only include students who are graduated at 2011-12 
+    filter(Year == "2011-12" & "Grade 9" != "NA") %>%
+    
+    # select columns that are useful or I am interested in 
+    select(DBN, `School Name`,`Total Enrollment`, `% Poverty`, `% English Language Learners`, `% Students with Disabilities`, 
+         `% Asian`, `% Black`, `% Hispanic`, `% White`, 
+         `% Male`, `% Female`) %>% 
+    
+    # change these percentage variables from character into numeric format 
+    mutate(`% Poverty` = parse_number(`% Poverty`)/100,
+         `% English Language Learners` = parse_number(`% English Language Learners`)/100,
+         `% Students with Disabilities` = parse_number(`% Students with Disabilities`)/100,
+         `% Asian` = parse_number(`% Asian`)/100,
+         `% Black` = parse_number(`% Black`)/100,
+         `% Hispanic` = parse_number(`% Hispanic`)/100,
+         `% White` = parse_number(`% White`)/100,
+         `% Male` = parse_number(`% Male`)/100,
+         `% Female` = parse_number(`% Female`)/100) 
+```
+What I need in the Graduation file is the graduation rate and dropped-out rate. I will select 4 year duration and cohort year starting at 2008, since this corresponds to the graduation year 2011-12. 
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+glimpse(graduation)
+```
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+graduation <- graduation %>%
+    
+    # select cohort year starting at 2008
+    filter(`Cohort Year` == "2008" & Cohort %in% c("4 year August","4 year June")) %>%  
+    
+    # unselect hose unnecessary rows
+    select(DBN, `School Name`,Cohort, `Toal Grads #`,`% of cohort`, `% of cohort 6`) %>% 
+    
+    # change them into inutive names
+    rename('Total_Grads_%'  = `% of cohort`, 'Dropped_Out_%' =`% of cohort 6`) %>% 
+    
+    # change data type
+    mutate(`Toal Grads #` = as.numeric(`Toal Grads #`),
+         `Total_Grads_%` = as.numeric(`Total_Grads_%`),
+         `Dropped_Out_%` = as.numeric(`Dropped_Out_%`)) %>% 
+    
+    # obtain school-level information 
+    group_by(DBN) %>% 
+    summarize(`Toal Grads #` = sum(`Toal Grads #`),
+              `Total_Grads_%` = mean(`Total_Grads_%`),
+              `Dropped_Out_%` = mean(`Dropped_Out_%`)) %>% 
+    
+    # get a percentage format 
+    mutate(`Total_Grads_%` = `Total_Grads_%`/100,
+            `Dropped_Out_%` = `Dropped_Out_%`/100)
+```
+For the High School Directory file, I am interested in the Boroughs where high schools are located at and the specific coordinates information in location column. 
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+glimpse(hs_directory)
+```
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+hs_directory <- hs_directory %>%
+    
+    rename(DBN = dbn) %>%
+    
+    # select variables I will need
+    select(DBN, school_name, borough, `Location 1`) %>% 
+    
+    # split Location text by '\n\' and choose the last part
+    mutate(lat_long = str_split(`Location 1`, "\n", simplify = TRUE)[,3]) %>% 
+    
+    # split it further by ',' and assign them into latitude and longitude columns
+    mutate(lat = str_split(lat_long, ",", simplify = TRUE)[,1], 
+           long = str_split(lat_long, ",", simplify = TRUE)[,2]) %>% 
+    
+    # get rid of the parenthesis 
+    mutate(Latitude = str_sub(lat,2,-1), Longitude = str_sub(long, 1,-2)) %>% 
+    
+    # change data type
+    mutate_at(vars(Latitude, Longitude), as.numeric) %>% 
+    
+    select(DBN, school_name, borough, Latitude, Longitude)
+```
+For the Survey file, there are two files, one is survey results about general education, the other one is about District 75 program, a program that provides highly specialized instructional support for students with significant challenges. I will retain rows related to High School and relevant survey scores. Since they have the same variables, I then combine both files by stacking one file on another by rows. 
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+survey_gened <- survey_gened %>% 
+  filter(schooltype == 'High School') %>% 
+  select(dbn,schoolname,saf_p_11:aca_tot_11)
+
+survey_d75 <- survey_d75 %>% 
+  select(dbn,schoolname,saf_p_11:aca_tot_11)
+
+# combine `survey` and `survey_d75` data frames 
+survey <- survey_gened %>% 
+  bind_rows(survey_d75) %>% 
+  rename(DBN = dbn)
+```
+After doing some cleaning work on each data file, I want to check whether there are any duplicated DBNs in each of them. I create a list to include all of 6 data set, then apply the check function to them at once. Luckily, no duplicated DBN is found :) 
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# Create a list of the six data frames named ny_schools.
+ny_schools <- list(sat_results, class_size, demographics, graduation, hs_directory, survey)
+names(ny_schools) <- c("sat_results", "class_size", "demographics", "graduation", "hs_directory", "survey")
+
+## Return a list of rows from each data frame that contain duplicate values of DBN. 
+duplicate_DBN <- ny_schools %>%
+  map(mutate, is_dup = duplicated(DBN))  %>% 
+  map(filter, is_dup == "TRUE")
+```
+Since SAT test results are the dependent variable in my analysis, so I use sat_results as the base file to left join other ones by the key factor DBN. The new file named combined_db. 
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+combined_db <- sat_results %>%
+  left_join(class_size, by = "DBN") %>%
+  left_join(demographics, by = "DBN") %>%
+  left_join(graduation, by = "DBN") %>%
+  left_join(hs_directory, by = "DBN") %>% 
+  left_join(survey, by = "DBN")
+```
+The combined file include many columns related to school names and each of them contains certain null values. I check each of them and choose the one with least null values. 
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# check the null values in the combined data set
+colSums(is.na(combined_db)) 
+
+# unselect school name columns with more null values 
+combined_db <- combined_db %>%
+  select(- 'School Name',-school_name, -schoolname) %>%
+  rename(School_name = `SCHOOL NAME`, Borough = borough) %>% 
+  mutate(School_name = str_to_title(School_name, locale = "en"))
+```
+By calculating the correlations between Avg_sat_score with all other columns, I will know which factor may has high influence on the test results. I then filter those variables with high correlations values more than 0.5 and less than -0.5. 
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=FALSE}
+combined_db %>%
+  select_if(is.numeric) %>%
+  
+  # create a correlation matrix for all numeric variables
+  cor(use = "pairwise.complete.obs") %>%  
+  
+  # change the matrix into tibble format
+  as_tibble(rownames = "variable") %>% 
+  
+  # select correlations between Avg_sat_score and other variables
+  select(variable, Avg_sat_score) %>% #  
+  
+  # filter the ones with high correlations
+  filter(Avg_sat_score > 0.5 | Avg_sat_score < -0.5) %>%  
+  
+  # oder the correlation values from high to low
+  arrange(desc(Avg_sat_score)) 
+```
+For visualizations, I need to reshape certain columns (social, racial and sex factors) with percentage into two columns, one for factor and the other one for corresponding percentage. As regards survey data, the response score to each question represent separate column, so I also need to pivot these data. After that, I extract information from the names (e.g. saf_p_11) to identity the response question category (Academic Expectations, communication, Engagement or Safety and Respect) and response group (parent, student and teacher) for further analysis. 
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# for social factors such as income, language learning and physical conditions
+combined_db <- combined_db %>%
+    # retain original columns with different names 
+    mutate(`% Poverty_n` = `% Poverty`,  `% English Language Learners_n`  =  `% English Language Learners`, 
+           `% Students with Disabilities_n` = `% Students with Disabilities`) %>%
+    # pivot columns 
+    gather(key = `Socio_indicator`, value = `% Socio_indicator`, `% Poverty`: `% Students with Disabilities`)
+
+# for racial factors (White, Asian, Black and Hispanic) 
+combined_db <- combined_db %>% 
+    # retain original columns with different names 
+    mutate(`% Asian_n`=`% Asian`, `% Black_n`=`% Black`, `% Hispanic_n`=`% Hispanic`, `% White_n`=`% White`) %>% 
+    # pivot the columns 
+    gather(key = `Race`, value = `% Race`, `% Asian`:`% White`)
+
+# for gender factors (male and female)
+combined_db <- combined_db %>% 
+    # retain original columns with different names 
+    mutate(`% Male_n`=`% Male`, `% Female_n`=`% Female`) %>% 
+    # pivot columns 
+    gather(key = `Gender`, value = `% Gender`, `% Male`:`% Female`)
+
+# for survey results
+combined_db <- combined_db %>%
+    # pivot columns 
+    gather(key = Response_category , value = Response_score , saf_p_11:aca_tot_11) %>%
+    # extract information about response category
+    mutate(Response_type = str_sub(Response_category,1,3)) %>%
+    # extract information about response group 
+    mutate(Response_by = str_sub(Response_category,5,6))
+
+# indicate the response category 
+combined_db <- combined_db %>% 
+  mutate(Response_type = if_else(Response_type == 'saf', 'Safety and Respect',
+                                 if_else(Response_type == 'com', 'Communication',
+                                         if_else(Response_type == 'eng', 'Engagement',
+                                                 if_else(Response_type == 'aca', 'Academic Expectations', 'NA')))))
+# indicate the response group 
+combined_db <- combined_db %>% 
+  mutate(Response_by = if_else(Response_by == 'p_', 'Parent',
+                                 if_else(Response_by == 't_', 'Teacher',
+                                         if_else(Response_by == 's_', 'Student',
+                                                if_else(Response_by == 'to', 'Total','NA')))))
+```
+
+Finally, I have cleaned up the data and it is ready for next step. I will do the following data visualization by using Tableau, and you can find them on my Tableau Public page (click [here](https://public.tableau.com/profile/shuangxu.li#!/vizhome/NYC_15773359968400/DB_General)).
